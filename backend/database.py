@@ -2,8 +2,12 @@ import os
 from typing import Optional
 import asyncpg
 from pydantic import BaseModel
-from datetime import datetime
+from datetime import datetime, date
 import json
+from dotenv import load_dotenv
+
+# .env 파일 로드
+load_dotenv()
 
 # 환경 변수에서 PostgreSQL 설정 가져오기
 DB_HOST = os.getenv("DB_HOST", "localhost")
@@ -137,7 +141,12 @@ async def create_portfolio(portfolio: PortfolioCreate) -> Optional[dict]:
             datetime.now()
             )
             
-            return dict(result) if result else None
+            if result:
+                # UUID 객체를 문자열로 변환
+                result_dict = dict(result)
+                result_dict['id'] = str(result_dict['id'])
+                return result_dict
+            return None
     except Exception as e:
         print(f"포트폴리오 생성 오류: {e}")
         return None
@@ -158,6 +167,12 @@ async def save_etf_holdings(portfolio_id: str, holdings: list[ETFHoldingCreate])
             if holdings:
                 values = []
                 for holding in holdings:
+                    # 문자열 날짜를 datetime.date 객체로 변환
+                    if isinstance(holding.purchase_date, str):
+                        purchase_date = datetime.strptime(holding.purchase_date, '%Y-%m-%d').date()
+                    else:
+                        purchase_date = holding.purchase_date
+                    
                     values.append((
                         portfolio_id,
                         holding.symbol,
@@ -165,7 +180,7 @@ async def save_etf_holdings(portfolio_id: str, holdings: list[ETFHoldingCreate])
                         holding.shares,
                         holding.current_price,
                         holding.purchase_price,
-                        holding.purchase_date,
+                        purchase_date,
                         holding.sector,
                         holding.currency,
                         datetime.now()
@@ -209,7 +224,18 @@ async def get_portfolio_with_holdings(portfolio_id: str) -> Optional[PortfolioRe
                 ORDER BY created_at
             """, portfolio_id)
             
-            holdings = [dict(row) for row in holdings_result]
+            # UUID 객체를 문자열로 변환하고 날짜 필드도 문자열로 변환
+            holdings = []
+            for row in holdings_result:
+                holding = dict(row)
+                holding['id'] = str(holding['id'])
+                holding['portfolio_id'] = str(holding['portfolio_id'])
+                
+                # 날짜 필드를 문자열로 변환
+                if holding['purchase_date']:
+                    holding['purchase_date'] = holding['purchase_date'].strftime('%Y-%m-%d')
+                
+                holdings.append(holding)
             
             return PortfolioResponse(
                 id=str(portfolio_result['id']),
@@ -238,10 +264,96 @@ async def get_user_portfolios(user_id: str = "anonymous") -> list[dict]:
                 ORDER BY updated_at DESC
             """, user_id)
             
-            return [dict(row) for row in result]
+            # UUID 객체를 문자열로 변환
+            portfolios = []
+            for row in result:
+                portfolio = dict(row)
+                portfolio['id'] = str(portfolio['id'])
+                portfolios.append(portfolio)
+            
+            return portfolios
     except Exception as e:
         print(f"사용자 포트폴리오 조회 오류: {e}")
         return []
+
+async def update_portfolio(portfolio_id: str, portfolio: PortfolioCreate, holdings: list[ETFHoldingCreate]) -> Optional[dict]:
+    """포트폴리오 업데이트"""
+    if not connection_pool:
+        print("❌ 데이터베이스 연결 풀이 없습니다")
+        return None
+    
+    try:
+        print(f"🔄 포트폴리오 업데이트 시작 - ID: {portfolio_id}")
+        async with connection_pool.acquire() as conn:
+            # 트랜잭션 시작
+            async with conn.transaction():
+                # 포트폴리오 정보 업데이트
+                print(f"📝 포트폴리오 기본 정보 업데이트: {portfolio.name}")
+                portfolio_result = await conn.fetchrow("""
+                    UPDATE portfolios 
+                    SET name = $1, description = $2, updated_at = $3
+                    WHERE id = $4
+                    RETURNING id, name, description, user_id, created_at, updated_at
+                """, 
+                portfolio.name, 
+                portfolio.description, 
+                datetime.now(),
+                portfolio_id
+                )
+                
+                if not portfolio_result:
+                    print(f"❌ 포트폴리오를 찾을 수 없습니다 - ID: {portfolio_id}")
+                    return None
+                
+                # 기존 보유 정보 삭제
+                print(f"🗑️ 기존 ETF 보유 정보 삭제")
+                delete_result = await conn.execute("""
+                    DELETE FROM etf_holdings WHERE portfolio_id = $1
+                """, portfolio_id)
+                print(f"🗑️ 삭제된 행 수: {delete_result}")
+                
+                # 새 보유 정보 삽입
+                if holdings:
+                    print(f"💾 새 ETF 보유 정보 삽입 - {len(holdings)}개")
+                    values = []
+                    for holding in holdings:
+                        # 문자열 날짜를 datetime.date 객체로 변환
+                        if isinstance(holding.purchase_date, str):
+                            purchase_date = datetime.strptime(holding.purchase_date, '%Y-%m-%d').date()
+                        else:
+                            purchase_date = holding.purchase_date
+                        
+                        values.append((
+                            portfolio_id,
+                            holding.symbol,
+                            holding.name,
+                            holding.shares,
+                            holding.current_price,
+                            holding.purchase_price,
+                            purchase_date,
+                            holding.sector,
+                            holding.currency,
+                            datetime.now()
+                        ))
+                    
+                    await conn.executemany("""
+                        INSERT INTO etf_holdings 
+                        (portfolio_id, symbol, name, shares, current_price, purchase_price, 
+                         purchase_date, sector, currency, created_at)
+                        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    """, values)
+                    print(f"✅ ETF 보유 정보 삽입 완료")
+                
+                # UUID 객체를 문자열로 변환
+                result_dict = dict(portfolio_result)
+                result_dict['id'] = str(result_dict['id'])
+                print(f"✅ 포트폴리오 업데이트 완료 - ID: {portfolio_id}")
+                return result_dict
+    except Exception as e:
+        print(f"❌ 포트폴리오 업데이트 오류: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 async def delete_portfolio(portfolio_id: str) -> bool:
     """포트폴리오 삭제"""

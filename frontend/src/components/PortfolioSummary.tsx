@@ -11,7 +11,7 @@ export default function PortfolioSummaryComponent({ summary }: PortfolioSummaryP
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('ko-KR', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'KRW',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);

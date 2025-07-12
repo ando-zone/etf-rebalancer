@@ -1,12 +1,13 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { ETFHolding, SectorType } from '@/types/portfolio';
 import { Plus, Trash2, Loader2 } from 'lucide-react';
 import { getStockInfo, isKoreanStock, isForeignStock } from '@/utils/stockApi';
 
 interface ETFInputFormProps {
   onSubmit: (etfs: ETFHolding[]) => void;
+  initialEtfs?: ETFHolding[];
 }
 
 const SECTOR_OPTIONS = [
@@ -17,7 +18,7 @@ const SECTOR_OPTIONS = [
   { value: 'crypto' as SectorType, label: '비트코인' }
 ];
 
-export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
+export default function ETFInputForm({ onSubmit, initialEtfs }: ETFInputFormProps) {
   const [etfs, setEtfs] = useState<Partial<ETFHolding>[]>([
     { symbol: '', name: '', shares: 0, purchasePrice: 0, currentPrice: 0, sector: 'growth' }
   ]);
@@ -26,6 +27,19 @@ export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
   // 디바운스를 위한 타이머 저장
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [debounceTimers, setDebounceTimers] = useState<(NodeJS.Timeout | null)[]>([null]);
+
+  // 입력 중인 텍스트를 저장하는 상태
+  const [inputTexts, setInputTexts] = useState<{[key: string]: string}>({});
+
+  // 초기 ETF 데이터가 변경될 때 상태 업데이트
+  useEffect(() => {
+    if (initialEtfs && initialEtfs.length > 0) {
+      setEtfs(initialEtfs);
+      setLoadingStates(new Array(initialEtfs.length).fill(false));
+      setDebounceTimers(new Array(initialEtfs.length).fill(null));
+      setInputTexts({}); // 입력 텍스트 상태 초기화
+    }
+  }, [initialEtfs]);
 
   const addETF = () => {
     setEtfs(currentEtfs => [...currentEtfs, { symbol: '', name: '', shares: 0, purchasePrice: 0, currentPrice: 0, sector: 'growth' }]);
@@ -42,6 +56,30 @@ export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
       return currentTimers.filter((_, i) => i !== index);
     });
     
+    // 해당 ETF의 입력 텍스트 정리
+    setInputTexts(prevTexts => {
+      const newTexts = { ...prevTexts };
+      Object.keys(newTexts).forEach(key => {
+        if (key.startsWith(`${index}-`)) {
+          delete newTexts[key];
+        }
+      });
+      
+      // 인덱스 재조정
+      const adjustedTexts: {[key: string]: string} = {};
+      Object.keys(newTexts).forEach(key => {
+        const [keyIndex, field] = key.split('-');
+        const keyIndexNum = parseInt(keyIndex);
+        if (keyIndexNum > index) {
+          adjustedTexts[`${keyIndexNum - 1}-${field}`] = newTexts[key];
+        } else {
+          adjustedTexts[key] = newTexts[key];
+        }
+      });
+      
+      return adjustedTexts;
+    });
+    
     setEtfs(currentEtfs => currentEtfs.filter((_, i) => i !== index));
     setLoadingStates(currentStates => currentStates.filter((_, i) => i !== index));
   };
@@ -56,30 +94,73 @@ export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
 
   // 숫자 포맷팅 함수들
   const formatNumber = (value: number | string, type: 'shares' | 'currency', currency: string = 'USD'): string => {
-    if (!value) return '';
+    if (!value && value !== 0) return '';
     const numValue = typeof value === 'string' ? parseFloat(value.replace(/,/g, '')) : value;
     if (isNaN(numValue)) return '';
     
     if (type === 'shares') {
-      // 보유 수량은 소수점 2자리까지
-      return numValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
+      // 보유 수량은 소수점 4자리까지
+      return numValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 4 });
     } else {
-      // 한국 원화는 소수점 없이, 달러는 소수점 2자리
+      // 한국 원화는 소수점 없이, 달러는 소수점 표시 (필요시에만)
       return currency === 'KRW' 
         ? numValue.toLocaleString('ko-KR', { maximumFractionDigits: 0 })
-        : numValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        : numValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 });
     }
   };
 
   const parseNumber = (value: string): number => {
+    if (!value || value.trim() === '') return 0;
     const cleaned = value.replace(/[^0-9.-]/g, '');
-    return parseFloat(cleaned) || 0;
+    const parsed = parseFloat(cleaned);
+    return isNaN(parsed) ? 0 : parsed;
   };
 
   // 숫자 입력 핸들러
   const handleNumberInput = (index: number, field: 'shares' | 'currentPrice' | 'purchasePrice', value: string) => {
+    const inputKey = `${index}-${field}`;
+    
+    // 입력 중인 텍스트 저장
+    setInputTexts(prev => ({
+      ...prev,
+      [inputKey]: value
+    }));
+    
+    // 숫자 값 업데이트
     const numValue = parseNumber(value);
     updateETF(index, field, numValue);
+  };
+
+  // 숫자 입력 필드 포커스 해제 시 텍스트 정리
+  const handleNumberBlur = (index: number, field: 'shares' | 'currentPrice' | 'purchasePrice') => {
+    const inputKey = `${index}-${field}`;
+    
+    // 입력 텍스트 정리
+    setInputTexts(prev => {
+      const newTexts = { ...prev };
+      delete newTexts[inputKey];
+      return newTexts;
+    });
+  };
+
+  // 입력 필드 값 가져오기
+  const getInputValue = (index: number, field: 'shares' | 'currentPrice' | 'purchasePrice', etf: Partial<ETFHolding>): string => {
+    const inputKey = `${index}-${field}`;
+    
+    // 입력 중인 텍스트가 있으면 그것을 반환
+    if (inputTexts[inputKey] !== undefined) {
+      return inputTexts[inputKey];
+    }
+    
+    // 아니면 포맷팅된 값 반환
+    const value = etf[field];
+    if (!value && value !== 0) return '';
+    
+    if (field === 'shares') {
+      return formatNumber(value, 'shares');
+    } else {
+      return formatNumber(value, 'currency', etf.currency);
+    }
   };
 
   // 종목 코드로 ETF명 자동 조회
@@ -277,14 +358,15 @@ export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   보유 수량 *
                 </label>
-                                  <input
-                    type="text"
-                    value={etf.shares ? formatNumber(etf.shares, 'shares') : ''}
-                    onChange={(e) => handleNumberInput(index, 'shares', e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-500 text-gray-900"
-                    placeholder="예: 50"
-                    required
-                  />
+                <input
+                  type="text"
+                  value={getInputValue(index, 'shares', etf)}
+                  onChange={(e) => handleNumberInput(index, 'shares', e.target.value)}
+                  onBlur={() => handleNumberBlur(index, 'shares')}
+                  className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-500 text-gray-900"
+                  placeholder="예: 50"
+                  required
+                />
               </div>
               
               <div>
@@ -293,8 +375,9 @@ export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
                 </label>
                 <input
                   type="text"
-                  value={etf.purchasePrice ? formatNumber(etf.purchasePrice, 'currency', etf.currency) : ''}
+                  value={getInputValue(index, 'purchasePrice', etf)}
                   onChange={(e) => handleNumberInput(index, 'purchasePrice', e.target.value)}
+                  onBlur={() => handleNumberBlur(index, 'purchasePrice')}
                   className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-500 text-gray-900"
                   placeholder={etf.currency === 'KRW' ? "예: 80,000" : "예: 410.00"}
                   required
@@ -308,8 +391,9 @@ export default function ETFInputForm({ onSubmit }: ETFInputFormProps) {
                 <div className="relative">
                   <input
                     type="text"
-                    value={etf.currentPrice ? formatNumber(etf.currentPrice, 'currency', etf.currency) : ''}
+                    value={getInputValue(index, 'currentPrice', etf)}
                     onChange={(e) => handleNumberInput(index, 'currentPrice', e.target.value)}
+                    onBlur={() => handleNumberBlur(index, 'currentPrice')}
                     className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 placeholder:text-gray-500 text-gray-900"
                     placeholder="종목 코드 입력 시 자동 조회"
                     required

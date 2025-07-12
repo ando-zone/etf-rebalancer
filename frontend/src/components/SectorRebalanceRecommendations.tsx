@@ -11,7 +11,7 @@ export default function SectorRebalanceRecommendations({ recommendations }: Sect
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('ko-KR', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'KRW',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(Math.abs(amount));
@@ -127,13 +127,13 @@ export default function SectorRebalanceRecommendations({ recommendations }: Sect
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
               <div>
                 <p className="text-gray-600">현재 비중</p>
-                <p className="font-semibold text-gray-800">{recommendation.currentWeight.toFixed(1)}%</p>
+                <p className="font-semibold text-gray-800">{recommendation.currentWeight.toFixed(2)}%</p>
               </div>
               <div>
                 <p className="text-gray-600">비중 차이</p>
                 <p className={`font-semibold ${recommendation.targetWeight - recommendation.currentWeight > 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {recommendation.targetWeight - recommendation.currentWeight > 0 ? '+' : ''}
-                  {(recommendation.targetWeight - recommendation.currentWeight).toFixed(1)}%
+                  {(recommendation.targetWeight - recommendation.currentWeight).toFixed(2)}%
                 </p>
               </div>
               <div>
@@ -147,8 +147,8 @@ export default function SectorRebalanceRecommendations({ recommendations }: Sect
             {/* 비중 차이 시각화 */}
             <div className="mt-4">
               <div className="flex items-center justify-between text-xs text-gray-600 mb-1">
-                <span>현재: {recommendation.currentWeight.toFixed(1)}%</span>
-                <span>목표: {recommendation.targetWeight.toFixed(1)}%</span>
+                <span>현재: {recommendation.currentWeight.toFixed(2)}%</span>
+                <span>목표: {recommendation.targetWeight.toFixed(2)}%</span>
               </div>
               <div className="relative h-3 bg-gray-200 rounded-full">
                 {/* 현재 비중 표시 */}

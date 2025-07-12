@@ -1,4 +1,5 @@
 import { ETFHolding, SectorType, SectorAllocation, SectorRebalanceRecommendation } from '@/types/portfolio';
+import { calculateETFValueInKRW } from './currencyConverter';
 
 // 목표 포트폴리오 비중
 export const TARGET_ALLOCATION = {
@@ -28,11 +29,14 @@ export const SECTOR_COLORS = {
 };
 
 /**
- * 섹터별 자산 배분 계산
+ * 섹터별 자산 배분 계산 (환율 고려)
  */
-export function calculateSectorAllocation(etfs: ETFHolding[]): SectorAllocation[] {
-  // 전체 포트폴리오 가치 계산
-  const totalValue = etfs.reduce((sum, etf) => sum + (etf.shares * etf.currentPrice), 0);
+export async function calculateSectorAllocation(etfs: ETFHolding[]): Promise<SectorAllocation[]> {
+  // 전체 포트폴리오 가치 계산 (원화 기준)
+  const etfValuesInKRW = await Promise.all(
+    etfs.map(etf => calculateETFValueInKRW(etf.shares, etf.currentPrice, etf.currency || 'USD'))
+  );
+  const totalValue = etfValuesInKRW.reduce((sum, value) => sum + value, 0);
   
   // 섹터별 그룹화
   const sectorGroups = etfs.reduce((groups, etf) => {
@@ -47,31 +51,43 @@ export function calculateSectorAllocation(etfs: ETFHolding[]): SectorAllocation[
   // 모든 섹터에 대해 배분 계산
   const allocations: SectorAllocation[] = [];
   
-  Object.keys(TARGET_ALLOCATION).forEach(sector => {
-    const sectorType = sector as SectorType;
-    const sectorEtfs = sectorGroups[sectorType] || [];
-    const sectorValue = sectorEtfs.reduce((sum, etf) => sum + (etf.shares * etf.currentPrice), 0);
-    const percentage = totalValue > 0 ? (sectorValue / totalValue) * 100 : 0;
-    
-    allocations.push({
-      sector: sectorType,
-      sectorName: SECTOR_NAMES[sectorType],
-      value: sectorValue,
-      percentage: percentage,
-      targetPercentage: TARGET_ALLOCATION[sectorType],
-      color: SECTOR_COLORS[sectorType]
-    });
-  });
+  await Promise.all(
+    Object.keys(TARGET_ALLOCATION).map(async (sector) => {
+      const sectorType = sector as SectorType;
+      const sectorEtfs = sectorGroups[sectorType] || [];
+      
+      // 섹터별 가치 계산 (원화 기준)
+      const sectorValues = await Promise.all(
+        sectorEtfs.map(etf => calculateETFValueInKRW(etf.shares, etf.currentPrice, etf.currency || 'USD'))
+      );
+      const sectorValue = sectorValues.reduce((sum, value) => sum + value, 0);
+      const percentage = totalValue > 0 ? (sectorValue / totalValue) * 100 : 0;
+      
+      allocations.push({
+        sector: sectorType,
+        sectorName: SECTOR_NAMES[sectorType],
+        value: sectorValue,
+        percentage: percentage,
+        targetPercentage: TARGET_ALLOCATION[sectorType],
+        color: SECTOR_COLORS[sectorType]
+      });
+    })
+  );
   
   return allocations;
 }
 
 /**
- * 섹터별 리밸런싱 권장사항 계산
+ * 섹터별 리밸런싱 권장사항 계산 (환율 고려)
  */
-export function calculateSectorRebalanceRecommendations(etfs: ETFHolding[]): SectorRebalanceRecommendation[] {
-  const sectorAllocations = calculateSectorAllocation(etfs);
-  const totalValue = etfs.reduce((sum, etf) => sum + (etf.shares * etf.currentPrice), 0);
+export async function calculateSectorRebalanceRecommendations(etfs: ETFHolding[]): Promise<SectorRebalanceRecommendation[]> {
+  const sectorAllocations = await calculateSectorAllocation(etfs);
+  
+  // 전체 포트폴리오 가치 계산 (원화 기준)
+  const etfValuesInKRW = await Promise.all(
+    etfs.map(etf => calculateETFValueInKRW(etf.shares, etf.currentPrice, etf.currency || 'USD'))
+  );
+  const totalValue = etfValuesInKRW.reduce((sum, value) => sum + value, 0);
   
   const recommendations: SectorRebalanceRecommendation[] = [];
   
@@ -80,7 +96,7 @@ export function calculateSectorRebalanceRecommendations(etfs: ETFHolding[]): Sec
     const targetWeight = allocation.targetPercentage;
     const difference = targetWeight - currentWeight;
     
-    // 권장 금액 계산 (총 포트폴리오 가치 기준)
+    // 권장 금액 계산 (총 포트폴리오 가치 기준, 원화)
     const recommendedAmount = (difference / 100) * totalValue;
     
     // 액션 결정 (1% 이상 차이날 때만 권장)
@@ -110,11 +126,21 @@ export function calculateSectorRebalanceRecommendations(etfs: ETFHolding[]): Sec
 }
 
 /**
- * 포트폴리오 요약 정보 계산
+ * 포트폴리오 요약 정보 계산 (환율 고려)
  */
-export function calculatePortfolioSummary(etfs: ETFHolding[]) {
-  const totalValue = etfs.reduce((sum, etf) => sum + (etf.shares * etf.currentPrice), 0);
-  const totalCost = etfs.reduce((sum, etf) => sum + (etf.shares * etf.purchasePrice), 0);
+export async function calculatePortfolioSummary(etfs: ETFHolding[]) {
+  // 현재 가치 계산 (원화 기준)
+  const currentValuesInKRW = await Promise.all(
+    etfs.map(etf => calculateETFValueInKRW(etf.shares, etf.currentPrice, etf.currency || 'USD'))
+  );
+  const totalValue = currentValuesInKRW.reduce((sum, value) => sum + value, 0);
+  
+  // 매입 비용 계산 (원화 기준)
+  const purchaseValuesInKRW = await Promise.all(
+    etfs.map(etf => calculateETFValueInKRW(etf.shares, etf.purchasePrice, etf.currency || 'USD'))
+  );
+  const totalCost = purchaseValuesInKRW.reduce((sum, value) => sum + value, 0);
+  
   const totalReturn = totalValue - totalCost;
   const totalReturnPercent = totalCost > 0 ? (totalReturn / totalCost) * 100 : 0;
   

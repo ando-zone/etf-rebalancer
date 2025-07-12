@@ -1,18 +1,19 @@
 'use client';
 
 import { useState } from 'react';
-import PortfolioSummary from '@/components/PortfolioSummary';
+import PortfolioSummaryComponent from '@/components/PortfolioSummary';
 import AssetAllocationChart from '@/components/AssetAllocationChart';
 import ETFInputForm from '@/components/ETFInputForm';
 import SectorRebalanceRecommendations from '@/components/SectorRebalanceRecommendations';
-import { ETFHolding } from '@/types/portfolio';
+import ExchangeRateInfo from '@/components/ExchangeRateInfo';
+import { ETFHolding, SectorAllocation, SectorRebalanceRecommendation, PortfolioSummary } from '@/types/portfolio';
 import { 
   calculateSectorAllocation, 
   calculateSectorRebalanceRecommendations,
   calculatePortfolioSummary 
 } from '@/utils/rebalanceCalculator';
 import { BarChart3, Target, AlertTriangle, Save, Upload, List } from 'lucide-react';
-import { savePortfolio, getPortfolios, getPortfolio, type PortfolioResponse } from '@/utils/portfolioApi';
+import { savePortfolio, getPortfolios, getPortfolio, updatePortfolio, type PortfolioResponse } from '@/utils/portfolioApi';
 
 export default function Home() {
   const [etfs, setEtfs] = useState<ETFHolding[]>([]);
@@ -23,10 +24,32 @@ export default function Home() {
   const [portfolioName, setPortfolioName] = useState('');
   const [portfolioDescription, setPortfolioDescription] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [sectorAllocations, setSectorAllocations] = useState<SectorAllocation[]>([]);
+  const [rebalanceRecommendations, setRebalanceRecommendations] = useState<SectorRebalanceRecommendation[]>([]);
+  const [portfolioSummary, setPortfolioSummary] = useState<PortfolioSummary | null>(null);
+  const [currentPortfolioId, setCurrentPortfolioId] = useState<string | null>(null);
+  const [isUpdateMode, setIsUpdateMode] = useState(false);
+  const [originalPortfolioName, setOriginalPortfolioName] = useState('');
+  const [originalPortfolioDescription, setOriginalPortfolioDescription] = useState('');
 
-  const handleETFSubmit = (submittedEtfs: ETFHolding[]) => {
+  const handleETFSubmit = async (submittedEtfs: ETFHolding[]) => {
     setEtfs(submittedEtfs);
     setShowResults(true);
+    
+    // 비동기 계산 수행
+    try {
+      const [allocations, recommendations, summary] = await Promise.all([
+        calculateSectorAllocation(submittedEtfs),
+        calculateSectorRebalanceRecommendations(submittedEtfs),
+        calculatePortfolioSummary(submittedEtfs)
+      ]);
+      
+      setSectorAllocations(allocations);
+      setRebalanceRecommendations(recommendations);
+      setPortfolioSummary(summary);
+    } catch (error) {
+      console.error('계산 오류:', error);
+    }
   };
 
   // 포트폴리오 저장 함수
@@ -58,12 +81,36 @@ export default function Home() {
         }))
       };
 
-      const result = await savePortfolio(portfolioData);
-      alert(`포트폴리오가 성공적으로 저장되었습니다! (ID: ${result.portfolio_id})`);
-      setShowSaveModal(false);
-      setPortfolioName('');
-      setPortfolioDescription('');
+      console.log('💾 포트폴리오 저장 시작:', { 
+        isUpdateMode, 
+        currentPortfolioId, 
+        portfolioName,
+        etfCount: etfs.length 
+      });
+
+      if (isUpdateMode && currentPortfolioId) {
+        // 업데이트 모드
+        console.log('🔄 업데이트 모드로 저장 중...');
+        const result = await updatePortfolio(currentPortfolioId, portfolioData);
+        console.log('✅ 업데이트 완료:', result);
+        alert(`포트폴리오 "${portfolioName}"이 성공적으로 업데이트되었습니다!`);
+        setShowSaveModal(false);
+        // 업데이트 모드에서는 이름과 설명을 유지
+      } else {
+        // 새로 생성 모드
+        console.log('🆕 새로 생성 모드로 저장 중...');
+        const result = await savePortfolio(portfolioData);
+        console.log('✅ 새로 생성 완료:', result);
+        alert(`포트폴리오 "${portfolioName}"이 성공적으로 저장되었습니다!`);
+        setCurrentPortfolioId(result.portfolio_id);
+        setIsUpdateMode(true);
+        setOriginalPortfolioName(portfolioName);
+        setOriginalPortfolioDescription(portfolioDescription);
+        setShowSaveModal(false);
+        // 새로 생성한 경우 포트폴리오 정보는 유지 (업데이트 가능하도록)
+      }
     } catch (error) {
+      console.error('❌ 포트폴리오 저장 실패:', error);
       alert(`포트폴리오 저장 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
     } finally {
       setIsLoading(false);
@@ -104,6 +151,34 @@ export default function Home() {
       setEtfs(loadedEtfs);
       setShowResults(true);
       setShowLoadModal(false);
+      
+      // 현재 포트폴리오 정보 설정
+      setCurrentPortfolioId(portfolioId);
+      setIsUpdateMode(true);
+      
+      // 포트폴리오 이름과 설명을 저장 모달용 상태에 설정
+      setPortfolioName(portfolio.name);
+      setPortfolioDescription(portfolio.description || '');
+      
+      // 원본 정보 저장 (취소 시 복원용)
+      setOriginalPortfolioName(portfolio.name);
+      setOriginalPortfolioDescription(portfolio.description || '');
+      
+      // 비동기 계산 수행
+      try {
+        const [allocations, recommendations, summary] = await Promise.all([
+          calculateSectorAllocation(loadedEtfs),
+          calculateSectorRebalanceRecommendations(loadedEtfs),
+          calculatePortfolioSummary(loadedEtfs)
+        ]);
+        
+        setSectorAllocations(allocations);
+        setRebalanceRecommendations(recommendations);
+        setPortfolioSummary(summary);
+      } catch (calcError) {
+        console.error('계산 오류:', calcError);
+      }
+      
       alert(`포트폴리오 "${portfolio.name}"를 불러왔습니다.`);
     } catch (error) {
       alert(`포트폴리오 불러오기 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
@@ -112,9 +187,7 @@ export default function Home() {
     }
   };
 
-  const sectorAllocations = etfs.length > 0 ? calculateSectorAllocation(etfs) : [];
-  const rebalanceRecommendations = etfs.length > 0 ? calculateSectorRebalanceRecommendations(etfs) : [];
-  const portfolioSummary = etfs.length > 0 ? calculatePortfolioSummary(etfs) : null;
+  // 비동기 계산 결과는 state에서 관리
 
   return (
     <div className="min-h-screen bg-gray-100">
@@ -125,6 +198,11 @@ export default function Home() {
             <div className="flex items-center">
               <BarChart3 className="h-8 w-8 text-blue-600" />
               <h1 className="ml-2 text-2xl font-bold text-gray-900">ETF 리밸런서</h1>
+              {isUpdateMode && currentPortfolioId && (
+                <div className="ml-4 px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                  📝 {originalPortfolioName} 편집 중
+                </div>
+              )}
             </div>
             <div className="text-sm text-gray-600">
               섹터별 포트폴리오 리밸런싱 도구
@@ -157,8 +235,11 @@ export default function Home() {
           </div>
         </div>
 
+        {/* 환율 정보 */}
+        <ExchangeRateInfo />
+
         {/* ETF 입력 폼 */}
-        <ETFInputForm onSubmit={handleETFSubmit} />
+        <ETFInputForm onSubmit={handleETFSubmit} initialEtfs={etfs} />
 
         {/* 포트폴리오 저장/불러오기 버튼 */}
         <div className="bg-white rounded-lg shadow-md p-6 mb-6">
@@ -166,10 +247,14 @@ export default function Home() {
             <button
               onClick={() => setShowSaveModal(true)}
               disabled={etfs.length === 0 || isLoading}
-              className="flex items-center px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+              className={`flex items-center px-6 py-3 text-white rounded-md disabled:cursor-not-allowed transition-colors ${
+                isUpdateMode 
+                  ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400' 
+                  : 'bg-green-600 hover:bg-green-700 disabled:bg-gray-400'
+              }`}
             >
               <Save className="h-5 w-5 mr-2" />
-              포트폴리오 저장
+              {isUpdateMode ? '🔄 포트폴리오 업데이트' : '💾 포트폴리오 저장'}
             </button>
             
             <button
@@ -181,6 +266,29 @@ export default function Home() {
               포트폴리오 불러오기
             </button>
           </div>
+          
+          {isUpdateMode && currentPortfolioId && (
+            <div className="mt-4 text-center">
+              <p className="text-sm text-gray-600">
+                현재 불러온 포트폴리오를 업데이트하거나 새로 생성할 수 있습니다.
+              </p>
+              <button
+                onClick={() => {
+                  if (confirm('새로운 포트폴리오 생성 모드로 전환하시겠습니까?\n현재 편집 중인 포트폴리오 정보는 저장되지 않습니다.')) {
+                    setCurrentPortfolioId(null);
+                    setIsUpdateMode(false);
+                    setPortfolioName('');
+                    setPortfolioDescription('');
+                    setOriginalPortfolioName('');
+                    setOriginalPortfolioDescription('');
+                  }
+                }}
+                className="mt-2 text-xs px-3 py-1 bg-gray-100 text-gray-700 rounded hover:bg-gray-200 font-medium"
+              >
+                🆕 새 포트폴리오 생성 모드로 변경
+              </button>
+            </div>
+          )}
         </div>
 
         {/* 결과 표시 */}
@@ -188,7 +296,7 @@ export default function Home() {
           <>
             {/* 포트폴리오 요약 */}
             {portfolioSummary && (
-              <PortfolioSummary summary={portfolioSummary} />
+              <PortfolioSummaryComponent summary={portfolioSummary} />
             )}
 
             {/* 섹터별 자산 배분 차트 */}
@@ -268,7 +376,48 @@ export default function Home() {
         {showSaveModal && (
           <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
             <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
-              <h3 className="text-xl font-bold text-gray-800 mb-4">포트폴리오 저장</h3>
+              <h3 className="text-xl font-bold text-gray-800 mb-4">
+                {isUpdateMode ? '포트폴리오 업데이트' : '포트폴리오 저장'}
+              </h3>
+              
+              {isUpdateMode && (
+                <div className="bg-blue-50 border border-blue-200 rounded-md p-3 mb-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-medium text-blue-800">
+                      📝 업데이트 모드
+                    </p>
+                    <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded">
+                      ID: {currentPortfolioId?.slice(-8)}
+                    </span>
+                  </div>
+                                     <p className="text-sm text-blue-700 mb-3">
+                     현재 불러온 포트폴리오 &ldquo;{originalPortfolioName}&rdquo;을(를) 업데이트하거나 새로운 포트폴리오로 생성할 수 있습니다.
+                   </p>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setIsUpdateMode(true)}
+                      className="text-xs px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 font-medium"
+                    >
+                      ✅ 기존 포트폴리오 업데이트
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (confirm('새로운 포트폴리오로 생성하시겠습니까? 기존 포트폴리오는 변경되지 않습니다.')) {
+                          setIsUpdateMode(false);
+                          setCurrentPortfolioId(null);
+                          setPortfolioName('');
+                          setPortfolioDescription('');
+                          setOriginalPortfolioName('');
+                          setOriginalPortfolioDescription('');
+                        }
+                      }}
+                      className="text-xs px-3 py-1 bg-white border border-blue-300 text-blue-700 rounded hover:bg-blue-50"
+                    >
+                      🆕 새로 생성
+                    </button>
+                  </div>
+                </div>
+              )}
               
               <div className="space-y-4">
                 <div>
@@ -279,7 +428,7 @@ export default function Home() {
                     type="text"
                     value={portfolioName}
                     onChange={(e) => setPortfolioName(e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500 placeholder:text-gray-400 text-gray-900"
                     placeholder="예: 나의 ETF 포트폴리오"
                     required
                   />
@@ -292,7 +441,7 @@ export default function Home() {
                   <textarea
                     value={portfolioDescription}
                     onChange={(e) => setPortfolioDescription(e.target.value)}
-                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500 placeholder:text-gray-400 text-gray-900"
                     rows={3}
                     placeholder="포트폴리오에 대한 설명을 입력하세요"
                   />
@@ -301,7 +450,14 @@ export default function Home() {
               
               <div className="flex gap-3 mt-6">
                 <button
-                  onClick={() => setShowSaveModal(false)}
+                  onClick={() => {
+                    setShowSaveModal(false);
+                    // 업데이트 모드에서 취소 시 원본 정보로 복원
+                    if (isUpdateMode) {
+                      setPortfolioName(originalPortfolioName);
+                      setPortfolioDescription(originalPortfolioDescription);
+                    }
+                  }}
                   disabled={isLoading}
                   className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:cursor-not-allowed"
                 >
@@ -310,9 +466,16 @@ export default function Home() {
                 <button
                   onClick={handleSavePortfolio}
                   disabled={isLoading || !portfolioName.trim()}
-                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                  className={`flex-1 px-4 py-2 text-white rounded-md disabled:cursor-not-allowed ${
+                    isUpdateMode 
+                      ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400' 
+                      : 'bg-green-600 hover:bg-green-700 disabled:bg-gray-400'
+                  }`}
                 >
-                  {isLoading ? '저장 중...' : '저장'}
+                  {isLoading 
+                    ? (isUpdateMode ? '🔄 업데이트 중...' : '💾 저장 중...')
+                    : (isUpdateMode ? '🔄 업데이트' : '💾 저장')
+                  }
                 </button>
               </div>
             </div>

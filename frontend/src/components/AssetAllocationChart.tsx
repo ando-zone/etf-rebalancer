@@ -11,7 +11,7 @@ export default function AssetAllocationChart({ data }: AssetAllocationChartProps
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('ko-KR', {
       style: 'currency',
-      currency: 'USD',
+      currency: 'KRW',
       minimumFractionDigits: 0,
       maximumFractionDigits: 0,
     }).format(amount);
@@ -27,7 +27,7 @@ export default function AssetAllocationChart({ data }: AssetAllocationChartProps
             <span className="font-medium">금액:</span> {formatCurrency(data.value)}
           </p>
           <p className="text-green-600">
-            <span className="font-medium">현재 비중:</span> {data.percentage.toFixed(1)}%
+            <span className="font-medium">현재 비중:</span> {data.percentage.toFixed(2)}%
           </p>
           <p className="text-orange-600">
             <span className="font-medium">목표 비중:</span> {data.targetPercentage}%
@@ -68,7 +68,7 @@ export default function AssetAllocationChart({ data }: AssetAllocationChartProps
                 cx="50%"
                 cy="50%"
                 labelLine={false}
-                label={({ percentage }) => `${percentage}%`}
+                label={({ percentage }) => `${percentage.toFixed(2)}%`}
                 outerRadius={80}
                 fill="#8884d8"
                 dataKey="value"
@@ -102,7 +102,7 @@ export default function AssetAllocationChart({ data }: AssetAllocationChartProps
                 <p className="font-semibold text-gray-800">
                   {formatCurrency(asset.value)}
                 </p>
-                <p className="text-sm text-gray-600">{asset.percentage.toFixed(1)}%</p>
+                <p className="text-sm text-gray-600">{asset.percentage.toFixed(2)}%</p>
               </div>
             </div>
           ))}

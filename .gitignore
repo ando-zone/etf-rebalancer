@@ -1,6 +1,7 @@
 backend/__pycache__/
 backend/venv/
 backend/env/
+backend/.env
 backend/env.py
 backend/env.pyc
 backend/env.pyo

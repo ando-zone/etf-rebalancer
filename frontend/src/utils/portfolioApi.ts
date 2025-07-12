@@ -89,6 +89,28 @@ export async function getPortfolio(portfolioId: string): Promise<PortfolioRespon
   }
 }
 
+export async function updatePortfolio(portfolioId: string, portfolioData: PortfolioSaveRequest): Promise<{ portfolio_id: string; message: string }> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/portfolios/${portfolioId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(portfolioData),
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || '포트폴리오 업데이트 실패');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('포트폴리오 업데이트 오류:', error);
+    throw error;
+  }
+}
+
 export async function deletePortfolio(portfolioId: string): Promise<{ message: string }> {
   try {
     const response = await fetch(`${API_BASE_URL}/api/portfolios/${portfolioId}`, {

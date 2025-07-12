@@ -16,6 +16,7 @@ from database import (
     save_etf_holdings, 
     get_portfolio_with_holdings, 
     get_user_portfolios,
+    update_portfolio,
     delete_portfolio,
     PortfolioCreate,
     ETFHoldingCreate,
@@ -390,6 +391,56 @@ async def get_portfolio(portfolio_id: str):
     except Exception as e:
         logger.error(f"포트폴리오 조회 오류: {e}")
         raise HTTPException(status_code=500, detail="포트폴리오 조회 중 오류가 발생했습니다.")
+
+@app.put("/api/portfolios/{portfolio_id}", response_model=dict)
+async def update_portfolio_endpoint(portfolio_id: str, request: PortfolioSaveRequest):
+    """포트폴리오 업데이트"""
+    try:
+        logger.info(f"포트폴리오 업데이트 요청 - ID: {portfolio_id}, 이름: {request.name}")
+        
+        # 포트폴리오 업데이트
+        portfolio_data = PortfolioCreate(
+            name=request.name,
+            description=request.description,
+            user_id="anonymous"  # 추후 사용자 인증 구현 시 변경
+        )
+        
+        # ETF 보유 정보 준비
+        holdings = []
+        for holding_data in request.etf_holdings:
+            holding = ETFHoldingCreate(
+                portfolio_id=portfolio_id,
+                symbol=holding_data["symbol"],
+                name=holding_data["name"],
+                shares=holding_data["shares"],
+                current_price=holding_data["currentPrice"],
+                purchase_price=holding_data["purchasePrice"],
+                purchase_date=holding_data["purchaseDate"],
+                sector=holding_data["sector"],
+                currency=holding_data.get("currency", "USD")
+            )
+            holdings.append(holding)
+        
+        logger.info(f"업데이트할 ETF 개수: {len(holdings)}")
+        
+        # 업데이트 실행
+        updated_portfolio = await update_portfolio(portfolio_id, portfolio_data, holdings)
+        if not updated_portfolio:
+            logger.error(f"포트폴리오 업데이트 실패 - 포트폴리오를 찾을 수 없음: {portfolio_id}")
+            raise HTTPException(status_code=404, detail="포트폴리오를 찾을 수 없습니다.")
+        
+        logger.info(f"포트폴리오 업데이트 성공 - ID: {portfolio_id}")
+        return {
+            "message": "포트폴리오가 성공적으로 업데이트되었습니다.",
+            "portfolio_id": portfolio_id,
+            "portfolio": updated_portfolio
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"포트폴리오 업데이트 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"포트폴리오 업데이트 중 오류가 발생했습니다: {str(e)}")
 
 @app.delete("/api/portfolios/{portfolio_id}")
 async def delete_portfolio_endpoint(portfolio_id: str):
