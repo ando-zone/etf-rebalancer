@@ -1,0 +1,15 @@
+backend/__pycache__/
+backend/venv/
+backend/env/
+backend/env.py
+backend/env.pyc
+backend/env.pyo
+backend/env.pyd
+backend/env.pyw
+backend/env.pyz
+backend/env.pywz
+backend/env.pyz
+
+frontend/node_modules/
+frontend/dist/
+frontend/build/
