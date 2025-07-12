@@ -11,15 +11,105 @@ import {
   calculateSectorRebalanceRecommendations,
   calculatePortfolioSummary 
 } from '@/utils/rebalanceCalculator';
-import { BarChart3, Target, AlertTriangle } from 'lucide-react';
+import { BarChart3, Target, AlertTriangle, Save, Upload, List } from 'lucide-react';
+import { savePortfolio, getPortfolios, getPortfolio, type PortfolioResponse } from '@/utils/portfolioApi';
 
 export default function Home() {
   const [etfs, setEtfs] = useState<ETFHolding[]>([]);
   const [showResults, setShowResults] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showLoadModal, setShowLoadModal] = useState(false);
+  const [portfolios, setPortfolios] = useState<PortfolioResponse[]>([]);
+  const [portfolioName, setPortfolioName] = useState('');
+  const [portfolioDescription, setPortfolioDescription] = useState('');
+  const [isLoading, setIsLoading] = useState(false);
 
   const handleETFSubmit = (submittedEtfs: ETFHolding[]) => {
     setEtfs(submittedEtfs);
     setShowResults(true);
+  };
+
+  // 포트폴리오 저장 함수
+  const handleSavePortfolio = async () => {
+    if (!portfolioName.trim()) {
+      alert('포트폴리오 이름을 입력해주세요.');
+      return;
+    }
+
+    if (etfs.length === 0) {
+      alert('저장할 ETF 데이터가 없습니다.');
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const portfolioData = {
+        name: portfolioName,
+        description: portfolioDescription,
+        etf_holdings: etfs.map(etf => ({
+          symbol: etf.symbol,
+          name: etf.name,
+          shares: etf.shares,
+          currentPrice: etf.currentPrice,
+          purchasePrice: etf.purchasePrice,
+          purchaseDate: etf.purchaseDate,
+          sector: etf.sector,
+          currency: etf.currency || 'USD'
+        }))
+      };
+
+      const result = await savePortfolio(portfolioData);
+      alert(`포트폴리오가 성공적으로 저장되었습니다! (ID: ${result.portfolio_id})`);
+      setShowSaveModal(false);
+      setPortfolioName('');
+      setPortfolioDescription('');
+    } catch (error) {
+      alert(`포트폴리오 저장 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 포트폴리오 목록 불러오기
+  const handleLoadPortfolios = async () => {
+    setIsLoading(true);
+    try {
+      const portfolioList = await getPortfolios();
+      setPortfolios(portfolioList);
+      setShowLoadModal(true);
+    } catch (error) {
+      alert(`포트폴리오 목록 불러오기 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // 포트폴리오 불러오기
+  const handleLoadPortfolio = async (portfolioId: string) => {
+    setIsLoading(true);
+    try {
+      const portfolio = await getPortfolio(portfolioId);
+      const loadedEtfs: ETFHolding[] = portfolio.holdings.map((holding, index) => ({
+        id: `${index + 1}`,
+        symbol: holding.symbol,
+        name: holding.name,
+        shares: holding.shares,
+        currentPrice: holding.current_price,
+        purchasePrice: holding.purchase_price,
+        purchaseDate: holding.purchase_date,
+        sector: holding.sector as ETFHolding['sector'],
+        currency: holding.currency
+      }));
+      
+      setEtfs(loadedEtfs);
+      setShowResults(true);
+      setShowLoadModal(false);
+      alert(`포트폴리오 "${portfolio.name}"를 불러왔습니다.`);
+    } catch (error) {
+      alert(`포트폴리오 불러오기 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const sectorAllocations = etfs.length > 0 ? calculateSectorAllocation(etfs) : [];
@@ -69,6 +159,29 @@ export default function Home() {
 
         {/* ETF 입력 폼 */}
         <ETFInputForm onSubmit={handleETFSubmit} />
+
+        {/* 포트폴리오 저장/불러오기 버튼 */}
+        <div className="bg-white rounded-lg shadow-md p-6 mb-6">
+          <div className="flex flex-wrap gap-4 justify-center">
+            <button
+              onClick={() => setShowSaveModal(true)}
+              disabled={etfs.length === 0 || isLoading}
+              className="flex items-center px-6 py-3 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            >
+              <Save className="h-5 w-5 mr-2" />
+              포트폴리오 저장
+            </button>
+            
+            <button
+              onClick={handleLoadPortfolios}
+              disabled={isLoading}
+              className="flex items-center px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed transition-colors"
+            >
+              <Upload className="h-5 w-5 mr-2" />
+              포트폴리오 불러오기
+            </button>
+          </div>
+        </div>
 
         {/* 결과 표시 */}
         {showResults && etfs.length > 0 && (
@@ -150,6 +263,115 @@ export default function Home() {
             투자 전 충분한 검토와 전문가 상담을 권장합니다.
           </p>
         </div>
+
+        {/* 포트폴리오 저장 모달 */}
+        {showSaveModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-md mx-4">
+              <h3 className="text-xl font-bold text-gray-800 mb-4">포트폴리오 저장</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    포트폴리오 이름 *
+                  </label>
+                  <input
+                    type="text"
+                    value={portfolioName}
+                    onChange={(e) => setPortfolioName(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    placeholder="예: 나의 ETF 포트폴리오"
+                    required
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    설명 (선택사항)
+                  </label>
+                  <textarea
+                    value={portfolioDescription}
+                    onChange={(e) => setPortfolioDescription(e.target.value)}
+                    className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-green-500 focus:border-green-500"
+                    rows={3}
+                    placeholder="포트폴리오에 대한 설명을 입력하세요"
+                  />
+                </div>
+              </div>
+              
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowSaveModal(false)}
+                  disabled={isLoading}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50 disabled:cursor-not-allowed"
+                >
+                  취소
+                </button>
+                <button
+                  onClick={handleSavePortfolio}
+                  disabled={isLoading || !portfolioName.trim()}
+                  className="flex-1 px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed"
+                >
+                  {isLoading ? '저장 중...' : '저장'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* 포트폴리오 불러오기 모달 */}
+        {showLoadModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-lg p-6 w-full max-w-2xl mx-4 max-h-96 overflow-y-auto">
+              <h3 className="text-xl font-bold text-gray-800 mb-4 flex items-center">
+                <List className="h-5 w-5 mr-2" />
+                저장된 포트폴리오
+              </h3>
+              
+              {portfolios.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  저장된 포트폴리오가 없습니다.
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {portfolios.map((portfolio) => (
+                    <div
+                      key={portfolio.id}
+                      className="border border-gray-200 rounded-lg p-4 hover:bg-gray-50 cursor-pointer"
+                      onClick={() => handleLoadPortfolio(portfolio.id)}
+                    >
+                      <div className="flex justify-between items-start">
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-gray-800">{portfolio.name}</h4>
+                          {portfolio.description && (
+                            <p className="text-sm text-gray-600 mt-1">{portfolio.description}</p>
+                          )}
+                          <p className="text-xs text-gray-500 mt-2">
+                            생성일: {new Date(portfolio.created_at).toLocaleDateString('ko-KR')}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <span className="text-sm text-blue-600 font-medium">
+                            {portfolio.holdings?.length || 0}개 ETF
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              
+              <div className="flex gap-3 mt-6">
+                <button
+                  onClick={() => setShowLoadModal(false)}
+                  className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-md hover:bg-gray-50"
+                >
+                  닫기
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

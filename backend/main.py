@@ -3,16 +3,40 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import httpx
 import re
-from typing import Optional, Union
+from typing import Optional, Union, List
 import yfinance as yf
 import pandas as pd
 import logging
+
+# 데이터베이스 모듈 import
+from database import (
+    init_database, 
+    close_database,
+    create_portfolio, 
+    save_etf_holdings, 
+    get_portfolio_with_holdings, 
+    get_user_portfolios,
+    delete_portfolio,
+    PortfolioCreate,
+    ETFHoldingCreate,
+    PortfolioResponse
+)
 
 # 로깅 설정
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="ETF 리밸런서 API", version="1.0.0")
+
+# 앱 시작 시 데이터베이스 초기화
+@app.on_event("startup")
+async def startup_event():
+    await init_database()
+
+# 앱 종료 시 데이터베이스 연결 종료
+@app.on_event("shutdown")
+async def shutdown_event():
+    await close_database()
 
 # CORS 설정
 app.add_middleware(
@@ -30,6 +54,11 @@ class StockInfo(BaseModel):
     country: str
     current_price: Optional[float] = None
     currency: str = "USD"
+
+class PortfolioSaveRequest(BaseModel):
+    name: str
+    description: Optional[str] = None
+    etf_holdings: List[dict]
 
 @app.get("/")
 async def root():
@@ -290,6 +319,93 @@ async def get_foreign_stock_info(symbol: str) -> StockInfo:
                 current_price=None,
                 currency="USD"
             )
+
+# 포트폴리오 관련 API 엔드포인트
+
+@app.post("/api/portfolios", response_model=dict)
+async def save_portfolio(request: PortfolioSaveRequest):
+    """포트폴리오 저장"""
+    try:
+        # 포트폴리오 생성
+        portfolio_data = PortfolioCreate(
+            name=request.name,
+            description=request.description,
+            user_id="anonymous"  # 추후 사용자 인증 구현 시 변경
+        )
+        
+        portfolio = await create_portfolio(portfolio_data)
+        if not portfolio:
+            raise HTTPException(status_code=500, detail="포트폴리오 생성 실패")
+        
+        # ETF 보유 정보 저장
+        holdings = []
+        for holding_data in request.etf_holdings:
+            holding = ETFHoldingCreate(
+                portfolio_id=portfolio["id"],
+                symbol=holding_data["symbol"],
+                name=holding_data["name"],
+                shares=holding_data["shares"],
+                current_price=holding_data["currentPrice"],
+                purchase_price=holding_data["purchasePrice"],
+                purchase_date=holding_data["purchaseDate"],
+                sector=holding_data["sector"],
+                currency=holding_data.get("currency", "USD")
+            )
+            holdings.append(holding)
+        
+        success = await save_etf_holdings(portfolio["id"], holdings)
+        if not success:
+            raise HTTPException(status_code=500, detail="ETF 보유 정보 저장 실패")
+        
+        return {
+            "message": "포트폴리오가 성공적으로 저장되었습니다.",
+            "portfolio_id": portfolio["id"],
+            "portfolio": portfolio
+        }
+    
+    except Exception as e:
+        logger.error(f"포트폴리오 저장 오류: {e}")
+        raise HTTPException(status_code=500, detail=f"포트폴리오 저장 중 오류가 발생했습니다: {str(e)}")
+
+@app.get("/api/portfolios", response_model=List[dict])
+async def get_portfolios(user_id: str = "anonymous"):
+    """사용자의 모든 포트폴리오 목록 조회"""
+    try:
+        portfolios = await get_user_portfolios(user_id)
+        return portfolios
+    except Exception as e:
+        logger.error(f"포트폴리오 목록 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail="포트폴리오 목록 조회 중 오류가 발생했습니다.")
+
+@app.get("/api/portfolios/{portfolio_id}", response_model=PortfolioResponse)
+async def get_portfolio(portfolio_id: str):
+    """특정 포트폴리오 상세 조회"""
+    try:
+        portfolio = await get_portfolio_with_holdings(portfolio_id)
+        if not portfolio:
+            raise HTTPException(status_code=404, detail="포트폴리오를 찾을 수 없습니다.")
+        return portfolio
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"포트폴리오 조회 오류: {e}")
+        raise HTTPException(status_code=500, detail="포트폴리오 조회 중 오류가 발생했습니다.")
+
+@app.delete("/api/portfolios/{portfolio_id}")
+async def delete_portfolio_endpoint(portfolio_id: str):
+    """포트폴리오 삭제"""
+    try:
+        success = await delete_portfolio(portfolio_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="포트폴리오를 찾을 수 없습니다.")
+        
+        return {"message": "포트폴리오가 성공적으로 삭제되었습니다."}
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"포트폴리오 삭제 오류: {e}")
+        raise HTTPException(status_code=500, detail="포트폴리오 삭제 중 오류가 발생했습니다.")
 
 if __name__ == "__main__":
     import uvicorn
